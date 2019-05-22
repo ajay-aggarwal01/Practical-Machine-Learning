@@ -1,0 +1,246 @@
+---
+title: "Practical Machine Learning Week4 Prediction Assignment"
+author: "Ajay Aggarwal"
+date: "May 20, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+The goal of this project is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The data will be used to predict the manner in which they did the exercise. We will apply machine learning algorithm to the 20 test cases available in the test data and generate predictions.
+
+
+###Data
+
+The training data for this project are available here:
+
+[pml-training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available here:
+
+[pml-testing](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+The data for this project come from this [source](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har)
+
+###Load Data
+
+```{r loadData, warning=FALSE}
+##Load libraries
+### install.packages("caret")
+
+library("caret")
+
+#Download the data
+
+trainUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "pml-training.csv"
+testFile <- "pml-testing.csv"
+
+getwd()
+if(!file.exists(trainFile)){
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = trainFile)
+  }
+
+if(!file.exists("pml-testing.csv")){
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = testFile)
+  }
+
+#Read the training data and replace empty values by NA
+trainData <- read.csv(trainFile, sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+testData  <- read.csv(testFile, sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+
+dim(trainData)
+
+```
+
+
+```{r dimTestData, warning=FALSE}
+dim(testData)
+```
+
+###Data Cleaning 
+The training data set contains many columns with NA values or blank values.So we will remove them, because they will not produce any information. 
+
+The first seven columns give information about the people who did the test, and also timestamps. We will not take them in our model.
+
+```{r DataCleaning_1}
+trainData <- trainData[,(colSums(is.na(trainData) ) == 0)]
+trainData <- trainData[, -c(1:7)]
+dim(trainData)
+```
+
+
+```{r testDataCleaning, warning=FALSE}
+testData <- testData[,(colSums(is.na(testData) ) == 0)]
+testData <- testData[, -c(1:7)]
+dim(testData)
+```
+
+###Partioning the training set for prediction
+Partioning Training data set into two data sets, 70% for Training, 30% for Testing. This splitting will help us to compute the out-of-sample errors.
+The test data will stay as is and will be used later to validate the prodction algorithm on the 20 cases.
+
+```{r partitionData}
+set.seed(1234) 
+x <- createDataPartition(trainData$classe, p = 0.7, list = FALSE)
+trainData70 <- trainData[x, ]
+testData30 <- trainData[-x, ]
+dim(trainData70)
+```
+
+```{r NZV_1, warning=FALSE, echo=FALSE}
+### Cleaning further by removing the variables that are near-zero-variance
+##nearZeroVar <- nearZeroVar(trainData70)
+##trainData70 <- trainData70[, -nearZeroVar]
+##testData30  <- testData30[, -nearZeroVar]
+##dim(trainData70)
+```
+
+```{r NZV_2, warning=FALSE}
+dim(testData30)
+```
+
+### Identify highly correlated attributes
+we use the findCorrelation function to search for highly correlated attributes with a cut off equal to 0.75.
+
+```{r findCorrelation, warning=FALSE}
+### install.packages("corrplot")
+### The downloaded binary packages are in C:\Users\aaggarwa.ORADEV\AppData\Local\Temp\RtmpgfDRGk\downloaded_packages
+
+library(corrplot)
+
+hc <- findCorrelation(   cor(trainData70[, -53]) , cutoff=0.75)
+names(trainData70)[hc]
+```
+
+###Train Model
+We will use following algorithms, classification trees,random forests, and generalized boosted model to identify the best model predict the outcome.
+
+1. Classification trees
+2. Random forests
+3. Generalized Boosted Model
+
+###1. Prediction with classification trees
+We first apply the  Classification tree model, and then we use the fancyRpartPlot() function to plot the classification tree.
+
+```{r ctree, warning=FALSE}
+## install.packages("rpart")
+
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+
+set.seed(12345)
+
+##dTreeModel <- train(classe~., data=trainData70, method="rpart", trControl=trainControl(method="cv", number=5))
+
+dTreeModel <- rpart(classe ~ ., data=trainData70, method="class")
+fancyRpartPlot(dTreeModel)
+```
+
+Applying classification trees model on test data to determine how well it performed based on the accuracy variable
+
+```{r ctreeplot, warning=FALSE}
+
+##install.packages('e1071', dependencies=TRUE)
+p1 <- predict(dTreeModel, testData30, type = "class")
+
+cmdTree <- confusionMatrix(p1, testData30$"classe")
+cmdTree
+
+#plot(dTreeModel,main="classification trees model error by number of trees")
+
+acrate <- round(cmdTree$overall['Accuracy'], 4)
+outofSampleError <- 1-acrate
+
+```
+
+Accuracy rate of the model is `r acrate`
+out-of-sample-error is about `r outofSampleError` which is considerable.
+
+
+###2. Prediction using random forest
+Here we will predict the sample error using random forest ML algorithms  and using confusion Matrix to test results.
+
+```{r rf, warning=FALSE}
+library(randomForest)
+
+##Random forests are a way of averaging multiple deep decision trees, trained on different parts of the same ##training set, with the goal of reducing the variance.This comes at the expense of a small increase in the bias and some loss of interpretability, but generally greatly boosts the performance in the final model.
+
+##RFs train each tree independently, using a random sample of the data. This randomness helps to make the model more robust than a single decision tree, and less likely to overfit on the training data
+
+##rfModel <- train(classe~., data=trainData70, method="rf", trControl=trControl, verbose=FALSE)
+rfModel <- randomForest(classe ~. , data=trainData70)
+predictRFModel <- predict(rfModel, testData30, type = "class")
+rfCMD <- confusionMatrix(predictRFModel, testData30$classe)
+rfCMD
+
+rfCMD$table
+
+rfAcrate <- rfCMD$overall[1]
+rfoutofSampleError2 <- 1-rfAcrate
+```
+
+Random Forests yielded better Results, as expected!
+Accuracy rate of the model is `r acrate`
+out-of-sample-error is about `r outofSampleError` which is considerable.
+
+
+The accuracy rate using the random forest is very high: Accuracy : `r rfAcrate` and therefore the out-of-sample-error is equal to `r rfoutofSampleError2`. But it might be due to overfitting.
+
+Let's plot the model
+
+
+```{r plotRF, warning=FALSE}
+
+## This plot shows each of the principal components in order from most important to least important.
+##varImpPlot(rfModel$finalModel, sort = TRUE, type = 1, pch = 19, col = 1, cex = 0.6, main = "Importance of the ##Individual Principal Components")
+##modFitrf <- train(classe ~., method="rf", data=training, trControl=trainControl(method='cv'), number=5, ##allowParallel=TRUE, importance=TRUE )
+plot(rfModel,main="Random forest model errorby number of trees")
+
+##names(rfModel)
+```
+
+###3. Prediction with Generalized Boosted Regression Models
+
+```{r applyGBM, warning=FALSE}
+###install.packages("gbm")
+
+library(gbm)
+
+##  GBT build trees one at a time, where each new tree helps to correct errors made by previously trained tree.
+
+set.seed(12345)
+GBRMControl <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+
+GBM_Model  <- train(classe ~ ., data=trainData70, method = "gbm", trControl = GBRMControl, verbose = FALSE)
+GBM_Model$finalModel
+###Validate the GBM model and
+pGBM <- predict(GBM_Model, newdata=testData30)
+cmGBM <- confusionMatrix(pGBM, testData30$classe)
+cmGBM
+gbmAcRate <- cmGBM$overall[1]
+
+```
+
+###Test cases:Applying the best model to the 20 test cases validation data 
+Comparing the accuracy rate values of the three models:
+1. Generalized Boosted Regression Models `r gbmAcRate`
+2. Random Forests Models `r rfAcrate`
+3. Classification Tree Models `r acrate`
+
+By comparing the accuracy rate values of the three models, it is clear the the 'Random Forest' model is the winner. So will use it on the validation data
+
+```{r cvResults, warning=FALSE}
+Results <- predict(rfModel, newdata=testData)
+Results
+```
+
+
